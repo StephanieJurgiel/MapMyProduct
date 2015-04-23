@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+ 	<title>Map My Product</title>
+	<link href='http://fonts.googleapis.com/css?family=Noto+Sans:400,700' rel='stylesheet' type='text/css'>
+	<link rel="stylesheet" type="text/css" href="bestBuy.css"/>
+	
+	
+	<!-- Import jQuery -->
+  <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCPfWXkE5PhSi_HmTKtMbq06EkNCes_EzE"></script>
+ 
+  <script>
+	"use strict";
+	var BEST_BUY_API_KEY = "ar956sekru9rv6pfxyb4wf56";
+	var map;
+	var infowindow;
+	var markers = [];
+	var mapOptions
+	var maps = [];
+	var map1;
+	var map2;
+	var geocoder;
+	var address;
+	var zipcode;
+	var distance;
+	var resultsNum;
+	var currentMap;
+	var skus = [];
+	var storesBySku = [];
+	var markers = [];
+
+	window.onload = init;
+	
+	//add event listeners and set up local storage for user input
+	function init(){
+		document.querySelector("#button").onclick = getData;
+		geocoder = new google.maps.Geocoder();
+		
+		document.querySelector("#button").addEventListener('click', function () {
+			var searchValue = document.getElementById("searchterm").value;
+			window.localStorage.setItem('value', searchValue);
+			
+			var zipcodeValue = document.getElementById("zipcode").value;
+			window.localStorage.setItem('zip', zipcodeValue);
+			
+			var radiusValue = document.getElementById("radius").value;
+			window.localStorage.setItem('radius', radiusValue);
+
+		}, false);
+		
+		if(window.localStorage.getItem('value') != null)
+		{
+			document.querySelector("#searchterm").value = window.localStorage.getItem('value');
+		}
+		if(window.localStorage.getItem('zip') != null)
+		{
+			document.querySelector("#zipcode").value = window.localStorage.getItem('zip');
+		}
+		if(window.localStorage.getItem('radius') != null)
+		{
+			document.querySelector("#radius").value = window.localStorage.getItem('radius');
+		}
+	}
+	
+	//get the user input and send the first request for the products search
+	function getData(){
+		//jquery functions
+		$("#content2").hide();
+		$("#content2").slideUp(500);
+		resultsNum = document.getElementById("numResults").value;
+		// get value of form field
+		var value = document.querySelector("#searchterm").value;
+		var zipcodeSearch = document.querySelector("#zipcode").value;
+		var radiusSearch = document.querySelector("#radius").value;
+		
+		// get rid of any leading and trailing spaces
+		value = value.trim();
+		zipcodeSearch = zipcodeSearch.trim();
+		radiusSearch = radiusSearch.trim();
+		
+		// if there's no band to search then bail out of the function (return does this)
+		if(value.length < 1 || zipcodeSearch.length < 1 || radiusSearch < 1){
+			var content = document.querySelector("#content2");
+			
+			//jquery functions
+			$(content).slideDown();
+			$(content).show();
+			document.querySelector("#content2").innerHTML = "<b class='center'>Please fill in all of the search criteria.</b>";
+			return;
+		}
+		
+		document.querySelector("#content2").innerHTML = "<b>Searching for " + value + "</b>";
+		
+		// replace spaces the user typed in the middle of the term with %20
+		// %20 is the hexadecimal value for a space
+		value = encodeURI(value); 
+		// call the web service, and download the file
+		var searchOrder = determineResultOrder();
+		
+		$.ajax({
+			type: "GET",
+			url: "http://api.remix.bestbuy.com/v1/products(name=" + value + "*)?show=sku,name,largeImage,salePrice,longDescription,color,condition,modelNumber,customerReviewCount,customerReviewAverage,thumbnailImage" + searchOrder + "&pageSize=" + resultsNum +"&callback=jsonLoaded&format=json&apiKey=" + BEST_BUY_API_KEY,
+			cache: true,
+			crossDomain:true,
+			success: function(data) {
+		},
+		dataType: 'jsonp',
+
+	});
+		
+	}
+
+	//add the store markers to the map
+	function addMarker(latitude, longitude, mapNum, title)
+	{
+		var position = {lat:latitude, lng:longitude};
+		var marker = new google.maps.Marker({position:position, map:mapNum});
+		mapNum.setCenter(marker.getPosition());
+		
+		//add a listener for the click event
+		google.maps.event.addListener(marker, 'click', function(e){
+			makeInfoWindow(this.position, title, mapNum);
+		});
+		
+		markers.push(marker);
+	}
+	
+	//create the maps 
+	function generateMap(numProducts)
+	{
+		var mapOptions0 = {
+			center: { lat: 39.828127, lng: -98.579404}, 
+			zoom: 1
+		};
+		maps = [];
+		
+		//for every product, create a map
+		for(var i = 0; i < numProducts; i++)
+		{
+			var mapdiv = 'map-div' + i;
+			maps[i] = new google.maps.Map(document.getElementById(mapdiv), mapOptions0);
+		}
+		
+	}
+	
+	//make info windows for the markers of the map
+	function makeInfoWindow(position,msg, map){
+			//close old InfoWindow if it exists
+			if(infowindow != null)
+			{
+				infowindow.close();
+			}
+			
+			//make a new InfoWindow
+			infowindow = new google.maps.InfoWindow({
+					map: map, 
+					position: position, 
+					content: "<b>" + msg + "</b>"
+			});
+			
+		}
+	
+	//generate markers on the maps to show the stores that have the products in stock
+	function generateMarkers(){
+		for(var i = 0; i < storesBySku.length; i++)
+		{
+			//if there are stores with the sku, make a marker on the map
+			if(storesBySku[i].length > 0)
+			{
+				//for every store in the array at the index of the storesBySku Array
+				for(var j = 0; j < storesBySku[i].length; j++)
+				{
+					//get the address of the store
+					var location = "Not Available";
+					var storeID = "Not Available";
+					var city = ""
+					var latitude = storesBySku[i][j].lat;
+					var longitude = storesBySku[i][j].lng;
+					location = storesBySku[i][j].longName;
+					if(location == null)
+					{
+						location = storesBySku[i][j].name;
+					}
+					
+					//create the text for the markers for the info window
+					var storeID = storesBySku[i][j].storeId;
+					var storeAddress = storesBySku[i][j].address;
+					var city = storesBySku[i][j].city;
+					var phone = storesBySku[i][j].phone;
+					addMarker(latitude, longitude, maps[i], location + "<br>" + storeAddress +", " + city + "<br>" +  "Store Id: " + storeID + "<br>" + phone);
+					maps[i].setZoom(8);
+				}
+			}
+		}
+	}
+	
+	//hide any maps that don't have any stores that have the product in stock
+	function clearEmptyMaps(){
+		for(var i = 0; i < storesBySku.length; i++)
+		{
+			var map = "#map-div" + i;
+			var divMap = document.querySelector(map);
+			//jquery function
+			$(divMap).show();
+			var none= "#none" + i;
+			var noneDiv = document.querySelector(none);
+			
+			//if there are no stores
+			if(storesBySku[i].length == 0)
+			{
+				//tell the user
+				var line = "<p> Sorry, there are no stores within " + distance + " miles of area code " + zipcode + " that have this product in stock.</p>";
+
+				//hide the map and show the no-stores output message to the user
+				noneDiv.innerHTML = line;
+				line = null;
+				//jquery functions
+				$(divMap).hide();
+				$(noneDiv).show();
+			}
+			
+		}
+	}
+	
+	//find the stores that have the products in stock
+	function getAvailableStores(){
+		zipcode = document.getElementById("zipcode").value;
+		distance = document.getElementById("radius").value;
+		
+		//form a string of skus to send in the request
+		var skusToSend;
+		if(skus[0] != null)
+		{
+			skusToSend = skus[0];
+		}
+		if(skus.length > 1)
+		{
+			for(var i = 0; i < skus.length; i++)
+			{
+				skusToSend += "," + skus[i];
+			}
+		}
+		
+		$.ajax({
+			type: "GET",
+			url: "http://api.remix.bestbuy.com/v1/stores(area("+zipcode+","+ distance+"))+products(sku%20in("+skusToSend+"))?show=storeId,lat,lng,name,longName,address,city,phone,products.sku,products.name&format=json&callback=jsonLoaded2&apiKey=ar956sekru9rv6pfxyb4wf56",
+			json:false,
+			jsonpCallback: "jsonLoaded2",
+			cache: true,
+			crossDomain:true,
+			success: function(data) {
+				//console.log(JSON.stringify(data));
+				//console.log("loaded:" + this.url);
+			},
+			dataType: 'jsonp',
+		});
+	}
+	
+	//callback function for the stores/location request
+	function jsonLoaded2(obj){
+		if(obj.error){
+			document.querySelector("#content2").innerHTML = "<b>No Stores Found</b>";
+		} 
+		else{
+			//if there are stores returned
+			if(obj.stores != null)
+			{
+				//get an array of all of the stores
+				var allStores = obj.stores;
+				//have an array of stores to store in the array of storesBySku
+				var storeArray = [];
+				
+				//for every sku
+				for(var i = 0; i < skus.length; i++)
+				{
+					storeArray = [];
+					//for every store
+					for(var j = 0; j < allStores.length; j++)
+					{
+						//get all of the products
+						var allProducts = allStores[j].products;
+						//for every product, sort the skew
+						for(var k = 0; k < allProducts.length; k++)
+						{
+							
+							if(allProducts[k].sku == skus[i])
+							{
+								storeArray.push(allStores[j]);
+							}
+						}
+					}//END OF STORE FOR
+					storesBySku[i] = storeArray;
+				}//END OF SKU FOR
+			}//END OF IF
+		}
+		//generate the store markers on the map and clear away any empty maps
+		generateMarkers();
+		clearEmptyMaps();
+	}
+	
+	//callback function for the products search
+	//outputs the products onto the screen
+	function jsonLoaded(obj){
+		
+		if(obj.error){
+			document.querySelector("#content2").innerHTML = "<b>No Results Found</b>";
+		} 
+		else {
+			maps = [];
+			skus = [];
+			storesBySku = [];
+			markers = [];
+			var allProducts = obj.products;
+			var htmlStringToAdd = "";
+			
+			
+			if(allProducts.length > 0){
+				//for all of the products returned
+				for (var i=0; i < allProducts.length ; i++){
+					var product = allProducts[i];
+					var name = product.name;
+					var sku = product.sku;
+					var price = product.salePrice;
+					var modelNumber = product.modelNumber;
+					var description = product.longDescription;
+					var imageURL = product.largeImage;
+					var stars = product.customerReviewAverage;
+					var starImage = calculateStars(stars);
+					
+					//if there is no image, give a default image
+					if(imageURL == null)
+					{
+						imageURL = "nopreview.png";
+					}
+					//if there is no product rating, tell the user
+					if(stars == null)
+					{
+						stars = "No Rating";
+					}
+					
+					//create the html for the products to add to the page
+					var line = "";
+					line += "<div class='productResult'>";
+					line = "<h3>" + name + "</h3>";
+					line += "<div class='productImage'><img  src='"+ imageURL +"'></div>";
+					line += "<div class='productContent'>";
+					line += "<p> Sale Price: " + price + "</p>";
+					line += "<p class='small'> Model: " + modelNumber + "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;SKU: " + sku + "</p>";
+					line += "<br>";
+					line += "<p>" + description + "</p>";
+					line += "<br>";
+					if(starImage) line += "<img class='stars' src='"+ starImage +"'>";
+					line += "<p class='inline'>" + stars + "</p>";
+					line += "</div>";
+					line += "<div id='map-div" + i +"'></div>";
+					line += "<div id='none" + i +"'></div>";
+					line += "<hr>";
+					line += "</div>";
+					htmlStringToAdd += line;
+					line = null;
+					document.querySelector("#content2").innerHTML = htmlStringToAdd;
+					
+					//add to a list of sku's the current product's sku to be used to find store locations
+					skus.push(product.sku);	
+				}
+				//get the stores and generate a map
+				getAvailableStores();
+				generateMap(allProducts.length);
+				
+				//jquery functions
+				$("#content2").slideDown(1000);
+			}
+			else {
+				//if no product results are found, tell the user
+				document.querySelector("#content2").innerHTML = "<b class='center'>No Results Found</b>";
+				//jquery functions
+				$("#content2").slideDown(200);
+			}
+			//a jquery function
+			$("#content2").show();
+		}
+	}	
+  
+	//calculate how many stars to show to the user based on the rating of the product
+	function calculateStars(starCount)
+	{
+		if(starCount == null) return;
+		if(starCount < 1) return "halfstar.png";
+		if(starCount == 1) return "1star.png";
+		if(starCount > 1 && starCount < 2) return "1halfstar.png";
+		if(starCount == 2) return "2star.png";
+		if(starCount > 2 && starCount < 3) return "2halfstar.png";
+		if(starCount == 3) return "3star.png";
+		if(starCount > 3 && starCount < 4) return "3halfstar.png";
+		if(starCount == 4) return "4star.png";
+		if(starCount > 4 && starCount < 5) return "4halfstar.png";
+		if(starCount == 5) return "5star.png";
+	}
+	
+	//determine which order to return the products in based on user input
+	//result will be put into the url of the request
+	function determineResultOrder(){
+		var list = document.getElementById("searchSelect");
+		var searchOption = list.options[list.selectedIndex].value;
+		
+		if(searchOption == "priceLowToHigh") return "&sort=salePrice.asc";
+		if(searchOption == "priceHighToLow") return "&sort=salePrice.desc";
+		if(searchOption == "ratingLowToHigh") return "&sort=customerReviewAverage.asc";
+		if(searchOption == "ratingHighToLow") return "&sort=customerReviewAverage.desc";
+		if(searchOption == "AtoZ") return "&sort=name.asc";
+		if(searchOption == "ZtoA") return "&sort=name.desc";
+	}
+  </script>
+  
+  
+</head>
+<body>
+	<div id="main">
+		<div id="top">
+			<h1>Map My Product</h1>
+			<h2>Search for a product and we'll tell you where you can buy it at a store near you!</h2>
+			<h2 id="spaced">A product locator using the <span class="hilight"><a href="https://developer.bestbuy.com/documentation/products-api" target="_blank"> Best Buy Product</a></span>, <span class="hilight"><a href="https://developer.bestbuy.com/documentation/stores-api" target="_blank"> Best Buy Stores</a> </span>, and <span class="hilight"><a href="https://developers.google.com/maps/" target="_blank"> Google Maps </a></span> APIs</h2>
+		</div>
+		
+			<div class="content">
+				<div id="search">
+					<h3 class="searchItem">Product:</h3> 
+					<input class="right" id="searchterm" placeholder="Ex: iphone phone 5" type="text" size="15" maxlength="20" value="" /> 
+					
+					<h3 class="searchItem">Zipcode:</h3> 
+					<input class="right" id="zipcode" placeholder="Ex: 14623" type="text" size="15" maxlength="100" value="" /> 
+					<h3 class="searchItem">Radius(mi):</h3> 
+					<input class="right" id="radius" placeholder="Ex: 20" type="text" size="15" maxlength="100" value="" /> 
+					
+					<br>
+					<h3 class="searchItem"> Sort By </h3>
+						<select id="searchSelect" class="right">
+							<option value="priceLowToHigh">Price: Low to High</option>
+							<option value="priceHighToLow">Price: High to Low</option>
+							<option value="ratingLowToHigh">Rating: Low to High</option>
+							<option value="ratingHighToLow">Rating: High to Low</option>
+							<option value="AtoZ">A to Z</option>
+							<option value="ZtoA">Z to A</option>
+						</select>	
+					<h3 class="searchItem"> Show </h3>
+						<select id="numResults" class="right">
+							<option value="10">10 results</option>
+							<option value="25">25 results</option>
+							<option value="50">50 results</option>
+							<option value="75">75 results</option>
+							<option value="100">100 results</option>
+						</select>	
+						
+					<button type="button" id="button">Map my Product!</button>
+				</div>
+				
+				<hr>
+					<h2>Results</h2>
+				<div id="content2">
+				</div>
+			</div>
+		
+	</div>
+</body>
+</html>
+
+
+
+
+
+
